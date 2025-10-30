@@ -1,1 +1,1 @@
-worker: python3 book_bot.py
+web: python book_bot.py
