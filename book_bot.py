@@ -7,15 +7,14 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from openai import OpenAI
 
 # ----------------------------------------------------------------------
-# 1. إعدادات المتغيرات والمفاتيح (التصحيح: مطابقة أسماء Railway)
+# 1. إعدادات المتغيرات والمفاتيح
 # ----------------------------------------------------------------------
 
-# يتم قراءة المفاتيح من متغيرات البيئة (Railway) باستخدام الأسماء التي تم إدخالها
+# تم توحيد الأسماء إلى الأحرف الكبيرة والخطوط السفلية (التنسيق القياسي)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-# 🚨 تم التعديل هنا ليتطابق تمامًا مع التسمية المختلطة في Railway
-GOOGLE_SEARCH_API_KEY = os.environ.get("Google_Search_API_KEY") 
-GOOGLE_SEARCH_CX_ID = os.environ.get("Google_Search_CX_ID") 
+GOOGLE_SEARCH_API_KEY = os.environ.get("GOOGLE_SEARCH_API_KEY") 
+GOOGLE_SEARCH_CX_ID = os.environ.get("GOOGLE_SEARCH_CX_ID") 
 
 # إعدادات التسجيل (Logging)
 logging.basicConfig(
@@ -34,49 +33,78 @@ else:
 # 2. دوال المساعدة (AI & Google Search)
 # ----------------------------------------------------------------------
 
-# دالة البحث الذكي عن رابط التحميل باستخدام Google Search API
-def smart_google_search(book_title: str):
+def _perform_search_stage(query: str):
     """
-    يبحث عن ملف PDF لكتاب معين باستخدام Google Custom Search API.
+    تنفذ عملية البحث الفعلية باستخدام Google Custom Search API.
     """
-    # التحقق من وجود المتغيرات قبل الاستخدام
-    if not GOOGLE_SEARCH_API_KEY or not GOOGLE_SEARCH_CX_ID:
-        return None, "يرجى إعداد مفاتيح Google Search API و CX ID بشكل صحيح في المتغيرات البيئية."
-    
-    # تحسين استعلام البحث
-    query = f"{book_title} filetype:pdf"
-    
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
         'key': GOOGLE_SEARCH_API_KEY,
         'cx': GOOGLE_SEARCH_CX_ID,
         'q': query,
-        'num': 5
+        'num': 10 # زيادة عدد النتائج إلى 10
     }
     
     try:
-        logger.info(f"جاري البحث عن: {query}")
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status() 
         data = response.json()
-        
-        if 'items' in data:
-            for item in data['items']:
-                link = item.get('link')
-                # التحقق من أن الرابط ينتهي بـ .pdf
-                if link and link.lower().endswith('.pdf'):
-                    return link, None
-            
-            return None, "تم العثور على نتائج بحث، لكن لم يتم العثور على رابط مباشر لملف PDF."
-        
-        return None, "لم يتم العثور على نتائج بحث ذات صلة."
-    
+        return data.get('items', [])
     except requests.exceptions.RequestException as e:
         logger.error(f"خطأ في طلب Google Search API: {e}")
-        return None, f"فشل الاتصال بخدمة Google Search API: {e}"
+        return []
     except Exception as e:
         logger.error(f"خطأ غير متوقع أثناء البحث: {e}")
-        return None, f"خطأ تقني غير متوقع: {e}"
+        return []
+
+def smart_google_search(book_title: str):
+    """
+    استراتيجية بحث ذكية متعددة المراحل لزيادة فرصة العثور على رابط مباشر.
+    """
+    if not GOOGLE_SEARCH_API_KEY or not GOOGLE_SEARCH_CX_ID:
+        return None, "يرجى إعداد مفاتيح Google Search API و CX ID بشكل صحيح في المتغيرات البيئية."
+    
+    # قائمة بأسماء نطاقات المكتبات الشائعة للتركيز عليها
+    known_library_domains = "site:kutub.info OR site:kutub-pdf.net OR site:pdf-books.org"
+    
+    # ------------------
+    # المرحلة 1: البحث الدقيق في المكتبات الشائعة عن ملف PDF
+    # ------------------
+    query_stage1 = f"{book_title} filetype:pdf {known_library_domains}"
+    logger.info(f"جاري المرحلة 1: {query_stage1}")
+    items = _perform_search_stage(query_stage1)
+
+    # ------------------
+    # المرحلة 2: البحث الواسع عن ملف PDF (الاستراتيجية السابقة)
+    # ------------------
+    if not items:
+        query_stage2 = f"{book_title} filetype:pdf"
+        logger.info(f"جاري المرحلة 2: {query_stage2}")
+        items = _perform_search_stage(query_stage2)
+
+    # ------------------
+    # المرحلة 3: البحث الشامل عن كلمات مفتاحية (تحميل، رابط، كتاب)
+    # ------------------
+    if not items:
+        query_stage3 = f"{book_title} تحميل رابط كتاب pdf"
+        logger.info(f"جاري المرحلة 3: {query_stage3}")
+        items = _perform_search_stage(query_stage3)
+        
+    # ------------------
+    # التحقق من الروابط
+    # ------------------
+    if items:
+        # الكلمات المفتاحية التي تدل على رابط تحميل مباشر
+        download_keywords = ['.pdf', 'download', 'تحميل', 'file', 'مباشر', 'كتاب']
+        
+        for item in items:
+            link = item.get('link')
+            # إذا كان الرابط ينتهي بـ .pdf أو يحتوي على كلمة تحميل
+            if link and any(keyword in link.lower() for keyword in download_keywords):
+                logger.info(f"تم العثور على رابط محتمل: {link}")
+                return link, None
+    
+    return None, "لم يتم العثور على رابط تحميل مباشر يطابق معايير البحث الذكي."
 
 
 # دالة الملخص الذكي باستخدام OpenAI
@@ -104,7 +132,7 @@ def get_ai_summary(book_title: str) -> str:
         return "❌ حدث خطأ أثناء محاولة الاتصال بـ OpenAI."
 
 # ----------------------------------------------------------------------
-# 3. دوال التعامل مع أوامر تليجرام
+# 3. دوال التعامل مع أوامر تليجرام (بدون تغيير)
 # ----------------------------------------------------------------------
 
 # دالة /start
@@ -119,7 +147,7 @@ async def handle_message(update: Update, context):
     book_title = update.message.text.strip()
     logger.info(f"تلقيت طلب بحث عن: {book_title}")
     
-    await update.message.reply_text(f"🔍 جاري البحث الذكي عن الكتاب: {book_title}...")
+    await update.message.reply_text(f"🔍 جاري البحث الذكي متعدد المراحل عن الكتاب: {book_title}...")
     
     # 1. البحث عن الكتاب
     pdf_link, error = smart_google_search(book_title)
@@ -146,27 +174,22 @@ async def handle_message(update: Update, context):
         )
 
 # ----------------------------------------------------------------------
-# 4. الدالة الرئيسية للتشغيل
+# 4. الدالة الرئيسية للتشغيل (بدون تغيير)
 # ----------------------------------------------------------------------
 
 def main():
-    # 🚨 التصحيح النهائي لضمان قراءة التوكن قبل البدء
     telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN") 
     
     if not telegram_token:
-        # رسالة خطأ واضحة في سجلات Railway
         logger.error("🚫 فشل البدء: لم يتم العثور على رمز التوكن (TELEGRAM_BOT_TOKEN). تحقق من المتغيرات البيئية.")
         return
 
-    # بناء التطبيق
     application = ApplicationBuilder().token(telegram_token).build()
     
-    # إضافة المعالجات
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)) 
 
-    logger.info("✅ البوت يعمل الآن بنظام البحث الذكي الثوري...")
-    # بدء تشغيل البوت (Polling)
+    logger.info("✅ البوت يعمل الآن بنظام البحث الذكي الثوري متعدد المراحل...")
     application.run_polling()
 
 if __name__ == '__main__':
