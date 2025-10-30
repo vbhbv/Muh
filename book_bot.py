@@ -7,14 +7,15 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from openai import OpenAI
 
 # ----------------------------------------------------------------------
-# 1. إعدادات المتغيرات والمفاتيح (يتم قراءتها من Railway)
+# 1. إعدادات المتغيرات والمفاتيح (التصحيح: مطابقة أسماء Railway)
 # ----------------------------------------------------------------------
 
-# يتم قراءة المفاتيح من متغيرات البيئة (Railway)
+# يتم قراءة المفاتيح من متغيرات البيئة (Railway) باستخدام الأسماء التي تم إدخالها
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-GOOGLE_SEARCH_API_KEY = os.environ.get("GOOGLE_SEARCH_API_KEY")
-GOOGLE_SEARCH_CX_ID = os.environ.get("GOOGLE_SEARCH_CX_ID") # تم تعديل الاسم ليتطابق مع Railway
+# 🚨 تم التعديل هنا ليتطابق تمامًا مع التسمية المختلطة في Railway
+GOOGLE_SEARCH_API_KEY = os.environ.get("Google_Search_API_KEY") 
+GOOGLE_SEARCH_CX_ID = os.environ.get("Google_Search_CX_ID") 
 
 # إعدادات التسجيل (Logging)
 logging.basicConfig(
@@ -38,11 +39,11 @@ def smart_google_search(book_title: str):
     """
     يبحث عن ملف PDF لكتاب معين باستخدام Google Custom Search API.
     """
+    # التحقق من وجود المتغيرات قبل الاستخدام
     if not GOOGLE_SEARCH_API_KEY or not GOOGLE_SEARCH_CX_ID:
-        # رسالة الخطأ توضح المشكلة بوضوح إذا لم يتم العثور على المفاتيح
         return None, "يرجى إعداد مفاتيح Google Search API و CX ID بشكل صحيح في المتغيرات البيئية."
     
-    # تحسين استعلام البحث للتركيز على ملفات PDF
+    # تحسين استعلام البحث
     query = f"{book_title} filetype:pdf"
     
     url = "https://www.googleapis.com/customsearch/v1"
@@ -50,23 +51,22 @@ def smart_google_search(book_title: str):
         'key': GOOGLE_SEARCH_API_KEY,
         'cx': GOOGLE_SEARCH_CX_ID,
         'q': query,
-        'num': 5  # طلب 5 نتائج لزيادة فرصة العثور على رابط مباشر
+        'num': 5
     }
     
     try:
         logger.info(f"جاري البحث عن: {query}")
         response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status() # إثارة خطأ لردود HTTP سيئة (4xx أو 5xx)
+        response.raise_for_status() 
         data = response.json()
         
         if 'items' in data:
             for item in data['items']:
                 link = item.get('link')
-                # التحقق من أن الرابط ينتهي بـ .pdf للتأكد من أنه رابط مباشر للملف
+                # التحقق من أن الرابط ينتهي بـ .pdf
                 if link and link.lower().endswith('.pdf'):
                     return link, None
             
-            # إذا لم يتم العثور على رابط مباشر لملف PDF
             return None, "تم العثور على نتائج بحث، لكن لم يتم العثور على رابط مباشر لملف PDF."
         
         return None, "لم يتم العثور على نتائج بحث ذات صلة."
@@ -125,7 +125,6 @@ async def handle_message(update: Update, context):
     pdf_link, error = smart_google_search(book_title)
     
     if pdf_link:
-        # تم العثور على الكتاب، الآن اطلب الملخص
         await update.message.reply_text("✅ تم العثور على الكتاب! جاري إعداد الملخص الذكي...")
         
         # 2. طلب الملخص من الذكاء الاصطناعي
